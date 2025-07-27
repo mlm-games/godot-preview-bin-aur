@@ -18,3 +18,8 @@ yay -S godot-preview-bin
 git clone https://github.com/mlm-games/godot-preview-bin-aur.git
 cd godot-preview-bin-aur
 makepkg -si
+```
+
+## LICENSE
+
+Godot comes with MIT license (see their page for more details)
