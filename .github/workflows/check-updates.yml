@@ -32,7 +32,12 @@ jobs:
           jq -r '[.[] | select(.tag_name | test("dev|beta|rc"))] | first | .tag_name')
         
         echo "Latest version: $LATEST_RELEASE"
-        echo "latest_version=$LATEST_RELEASE" >> $GITHUB_OUTPUT
+        echo "latest_version_raw=$LATEST_RELEASE" >> $GITHUB_OUTPUT
+        
+        # Convert version format for AUR (replace dots in dev/beta/rc with underscores)
+        # e.g., 4.5-beta3 -> 4.5beta3
+        AUR_VERSION=$(echo "$LATEST_RELEASE" | sed 's/\.dev/dev/g' | sed 's/\.beta/beta/g' | sed 's/\.rc/rc/g' | sed 's/-//g')
+        echo "latest_version=$AUR_VERSION" >> $GITHUB_OUTPUT
         
         # Get current version from PKGBUILD if it exists locally
         if [ -f PKGBUILD ]; then
@@ -43,7 +48,7 @@ jobs:
         echo "Current version: $CURRENT_VERSION"
         echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
         
-        if [[ "$LATEST_RELEASE" != "$CURRENT_VERSION" ]] || [[ "${{ inputs.force_update }}" == "true" ]]; then
+        if [[ "$AUR_VERSION" != "$CURRENT_VERSION" ]] || [[ "${{ inputs.force_update }}" == "true" ]]; then
           echo "update_needed=true" >> $GITHUB_OUTPUT
         else
           echo "update_needed=false" >> $GITHUB_OUTPUT
@@ -53,7 +58,7 @@ jobs:
       if: steps.check.outputs.update_needed == 'true'
       id: download
       run: |
-        VERSION="${{ steps.check.outputs.latest_version }}"
+        VERSION="${{ steps.check.outputs.latest_version_raw }}"
         URL="https://github.com/godotengine/godot-builds/releases/download/${VERSION}/Godot_v${VERSION}_linux.x86_64.zip"
         
         # Download and calculate checksum
@@ -103,8 +108,9 @@ jobs:
         # Maintainer: MLM-stuff gfxoxinzh@mozmail.com
         pkgname=godot-preview-bin
         pkgver=${{ steps.check.outputs.latest_version }}
+        _realver=${{ steps.check.outputs.latest_version_raw }}
         pkgrel=${{ steps.pkgrel.outputs.pkgrel }}
-        pkgdesc="Godot Engine Preview Builds - Prebuilt binary from official builds (alt git repo)"
+        pkgdesc="Godot Engine Preview/Beta - Prebuilt binary from official builds"
         arch=('x86_64')
         url="https://godotengine.org"
         license=('MIT')
@@ -113,7 +119,7 @@ jobs:
                     'pipewire-pulse: Audio support')
         provides=('godot-preview')
         conflicts=('godot-preview')
-        source=("https://github.com/godotengine/godot-builds/releases/download/${pkgver}/Godot_v${pkgver}_linux.x86_64.zip"
+        source=("https://github.com/godotengine/godot-builds/releases/download/${_realver}/Godot_v${_realver}_linux.x86_64.zip"
                 "godot-preview.desktop"
                 "godot-preview.svg")
         sha256sums=('${{ steps.download.outputs.sha256sum }}'
@@ -123,7 +129,7 @@ jobs:
         package() {
             # Extract binary
             install -dm755 "$pkgdir/opt/godot-preview"
-            install -Dm755 "Godot_v${pkgver}_linux.x86_64" "$pkgdir/opt/godot-preview/godot-preview"
+            install -Dm755 "Godot_v${_realver}_linux.x86_64" "$pkgdir/opt/godot-preview/godot-preview"
             
             # Create symlink
             install -dm755 "$pkgdir/usr/bin"
