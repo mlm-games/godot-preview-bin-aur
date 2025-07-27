@@ -1,14 +1,20 @@
-name: Check and Publish Updates
+name: Check and Update Godot Preview
 
 on:
   schedule:
-    - cron: '0 0 1 1 *'
-  workflow_dispatch: 
+    # Run every 20 days at 00:00 UTC
+    - cron: '0 0 */20 * *'
+  workflow_dispatch:
     inputs:
+      force_update:
+        description: 'Force update even if version unchanged'
+        required: false
+        default: false
+        type: boolean
       increment_pkgrel:
         description: 'Increment pkgrel (for same version updates)'
         required: false
-        default: true
+        default: false
         type: boolean
 
 jobs:
@@ -18,60 +24,70 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.x'
-    
-    - name: Install dependencies
-      run: |
-        pip install requests beautifulsoup4
-    
-    - name: Check for updates
+    - name: Check for latest Godot preview version
       id: check
       run: |
-        echo "Skipped now, go to next one"
-        echo "update_available=true" >> $GITHUB_OUTPUT
-        echo "new_version=0.0.11+2404-0ubuntu1" >> $GITHUB_OUTPUT
-        echo "pkgver=0.0.11+2404" >> $GITHUB_OUTPUT
+        # Get latest preview/beta release from Godot builds
+        LATEST_RELEASE=$(curl -s https://api.github.com/repos/godotengine/godot-builds/releases | \
+          jq -r '[.[] | select(.tag_name | test("dev|beta|rc"))] | first | .tag_name')
         
-        # python update-check.py > output.txt
-        # cat output.txt
+        echo "Latest version: $LATEST_RELEASE"
+        echo "latest_version=$LATEST_RELEASE" >> $GITHUB_OUTPUT
         
-        # Extract version info
-        # if grep -q "New version available!" output.txt; then
-        #   echo "update_available=true" >> $GITHUB_OUTPUT
-        #   NEW_VERSION=$(grep "Latest version:" output.txt | cut -d: -f2 | xargs)
-        #   echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
-        #   # Extract just the version number without ubuntu suffix
-        #   PKGVER=$(echo $NEW_VERSION | cut -d- -f1)
-        #   echo "pkgver=$PKGVER" >> $GITHUB_OUTPUT
-        # else
-        #   echo "update_available=false" >> $GITHUB_OUTPUT
-        # fi
+        # Get current version from PKGBUILD if it exists locally
+        if [ -f PKGBUILD ]; then
+          CURRENT_VERSION=$(grep "^pkgver=" PKGBUILD | cut -d= -f2)
+        else
+          CURRENT_VERSION="none"
+        fi
+        echo "Current version: $CURRENT_VERSION"
+        echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        
+        if [[ "$LATEST_RELEASE" != "$CURRENT_VERSION" ]] || [[ "${{ inputs.force_update }}" == "true" ]]; then
+          echo "update_needed=true" >> $GITHUB_OUTPUT
+        else
+          echo "update_needed=false" >> $GITHUB_OUTPUT
+        fi
     
     - name: Download and calculate checksum
-      if: steps.check.outputs.update_available == 'true'
+      if: steps.check.outputs.update_needed == 'true'
       id: download
       run: |
-        DEB_URL="https://launchpad.net/~libfprint-tod1-group/+archive/ubuntu/ppa/+files/libfprint-2-tod1-goodix-550a_${{ steps.check.outputs.new_version }}_amd64.deb"
-        wget -O temp.deb "$DEB_URL"
-        CHECKSUM=$(sha256sum temp.deb | cut -d ' ' -f 1)
+        VERSION="${{ steps.check.outputs.latest_version }}"
+        URL="https://github.com/godotengine/godot-builds/releases/download/${VERSION}/Godot_v${VERSION}_linux.x86_64.zip"
+        
+        # Download and calculate checksum
+        wget -O godot.zip "$URL"
+        CHECKSUM=$(sha256sum godot.zip | cut -d ' ' -f 1)
         echo "sha256sum=$CHECKSUM" >> $GITHUB_OUTPUT
-        rm temp.deb
-
+        
+        # Get file size to verify download
+        SIZE=$(stat -c%s godot.zip)
+        echo "Download size: $SIZE bytes"
+        rm godot.zip
+    
     - name: Get current pkgrel from AUR
+      if: steps.check.outputs.update_needed == 'true'
       id: current_pkgrel
       run: |
         # Try to get current PKGBUILD from AUR
-        CURRENT_PKGREL=$(curl -s "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=libfprint-2-tod1-goodix-v2" | grep "^pkgrel=" | cut -d= -f2 || echo "0")
+        CURRENT_PKGREL=$(curl -s "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=godot-preview-bin" | grep "^pkgrel=" | cut -d= -f2 || echo "0")
         echo "current_pkgrel=$CURRENT_PKGREL" >> $GITHUB_OUTPUT
+        
+        # Check if the version in AUR matches what we're updating to
+        AUR_VERSION=$(curl -s "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=godot-preview-bin" | grep "^pkgver=" | cut -d= -f2 || echo "none")
+        if [[ "$AUR_VERSION" == "${{ steps.check.outputs.latest_version }}" ]]; then
+          echo "same_version=true" >> $GITHUB_OUTPUT
+        else
+          echo "same_version=false" >> $GITHUB_OUTPUT
+        fi
       continue-on-error: true
-      
+    
     - name: Determine pkgrel
+      if: steps.check.outputs.update_needed == 'true'
       id: pkgrel
       run: |
-        if [[ "${{ inputs.increment_pkgrel }}" == "true" ]]; then
+        if [[ "${{ steps.current_pkgrel.outputs.same_version }}" == "true" ]] && [[ "${{ inputs.increment_pkgrel }}" == "true" ]]; then
           CURRENT=${{ steps.current_pkgrel.outputs.current_pkgrel }}
           NEW_PKGREL=$((CURRENT + 1))
           echo "pkgrel=$NEW_PKGREL" >> $GITHUB_OUTPUT
@@ -80,71 +96,74 @@ jobs:
         fi
     
     - name: Create PKGBUILD
-      if: steps.check.outputs.update_available == 'true'
+      if: steps.check.outputs.update_needed == 'true'
       run: |
         mkdir -p aur-package
         cat > aur-package/PKGBUILD << 'EOF'
         # Maintainer: MLM-stuff gfxoxinzh@mozmail.com
-        
-        pkgname=libfprint-2-tod1-goodix-v2
-        pkgver=${{ steps.check.outputs.pkgver }}
-        _debver="${pkgver}-0ubuntu1"
-        _debname="libfprint-2-tod1-goodix-550a"
+        pkgname=godot-preview-bin
+        pkgver=${{ steps.check.outputs.latest_version }}
         pkgrel=${{ steps.pkgrel.outputs.pkgrel }}
-        pkgdesc="Proprietary driver for Goodix fingerprint readers from Ubuntu launchpad"
+        pkgdesc="Godot Engine Preview Builds - Prebuilt binary from official builds (alt git repo)"
         arch=('x86_64')
-        url="https://launchpad.net/~libfprint-tod1-group"
-        license=('custom')
-        conflicts=('libfprint-2-tod1-goodix')
-        depends=('libfprint-tod')
-        makedepends=('tar')
-        groups=('fprint')
-        source=("https://launchpad.net/~libfprint-tod1-group/+archive/ubuntu/ppa/+files/${_debname}_${_debver}_amd64.deb")
-        sha256sums=('${{ steps.download.outputs.sha256sum }}')
-        
-        prepare() {
-            cd "$srcdir"
-            # Extract the deb file
-            ar x "${_debname}_${_debver}_amd64.deb"
-            # Extract data archive
-            tar -xf data.tar.*
-        }
+        url="https://godotengine.org"
+        license=('MIT')
+        depends=('glibc' 'libglvnd' 'libxcursor' 'libxi' 'libxinerama' 'libxrandr' 'hicolor-icon-theme' 'libxrender' 'libx11' 'libxext')
+        optdepends=('pipewire-alsa: Audio support'
+                    'pipewire-pulse: Audio support')
+        provides=('godot-preview')
+        conflicts=('godot-preview')
+        source=("https://github.com/godotengine/godot-builds/releases/download/${pkgver}/Godot_v${pkgver}_linux.x86_64.zip"
+                "godot-preview.desktop"
+                "godot-preview.svg")
+        sha256sums=('${{ steps.download.outputs.sha256sum }}'
+                    'SKIP'
+                    'SKIP')
         
         package() {
-            cd "$srcdir"
+            # Extract binary
+            install -dm755 "$pkgdir/opt/godot-preview"
+            install -Dm755 "Godot_v${pkgver}_linux.x86_64" "$pkgdir/opt/godot-preview/godot-preview"
             
-            # Adjust udev rules for Arch (replace plugdev with uaccess, rm unnecessary ATTRS{dev} (tested, works after rm))
-            if [ -f "lib/udev/rules.d/60-libfprint-2-tod1-goodix.rules" ]; then
-                sed -i 's/, ATTRS{dev}=="\*"//' lib/udev/rules.d/60-libfprint-2-tod1-goodix.rules
-                sed -i 's/GROUP="plugdev"/TAG+="uaccess"/' lib/udev/rules.d/60-libfprint-2-tod1-goodix.rules
-            fi
+            # Create symlink
+            install -dm755 "$pkgdir/usr/bin"
+            ln -s /opt/godot-preview/godot-preview "$pkgdir/usr/bin/godot-preview"
             
-            # Install library files
-            if [ -d "usr/lib/x86_64-linux-gnu/libfprint-2/tod-1" ]; then
-                install -dm755 "$pkgdir/usr/lib/libfprint-2/tod-1/"
-                install -Dm755 usr/lib/x86_64-linux-gnu/libfprint-2/tod-1/*.so "$pkgdir/usr/lib/libfprint-2/tod-1/"
-            fi
+            # Install desktop entry
+            install -Dm644 "$srcdir/godot-preview.desktop" "$pkgdir/usr/share/applications/godot-preview.desktop"
             
-            # Install udev rules
-            if [ -d "lib/udev/rules.d" ]; then
-                install -dm755 "$pkgdir/usr/lib/udev/rules.d/"
-                install -Dm644 lib/udev/rules.d/*.rules "$pkgdir/usr/lib/udev/rules.d/"
-            fi
-            
-            # Install license if present
-            if [ -f "usr/share/doc/${_debname}/copyright" ]; then
-                install -Dm644 "usr/share/doc/${_debname}/copyright" "$pkgdir/usr/share/licenses/${pkgname}/LICENSE"
-            fi
+            # Install icon
+            install -Dm644 "$srcdir/godot-preview.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/godot-preview.svg"
         }
         EOF
+        
+        # Create desktop file
+        cat > aur-package/godot-preview.desktop << 'EOF'
+        [Desktop Entry]
+        Name=Godot Preview
+        Comment=Multi-platform 2D and 3D game engine (Preview/Beta)
+        Exec=/usr/bin/godot-preview %f
+        Icon=godot-preview
+        Terminal=false
+        Type=Application
+        Categories=Development;Game;IDE;
+        MimeType=application/x-godot-project;
+        StartupWMClass=Godot
+        EOF
+        
+        # Download Godot icon
+        wget -O aur-package/godot-preview.svg "https://raw.githubusercontent.com/godotengine/godot/master/icon.svg"
     
     - name: Publish to AUR
-      if: steps.check.outputs.update_available == 'true'
+      if: steps.check.outputs.update_needed == 'true'
       uses: KSXGitHub/github-actions-deploy-aur@master
       with:
-        pkgname: libfprint-2-tod1-goodix-v2
+        pkgname: godot-preview-bin
         pkgbuild: aur-package/PKGBUILD
+        assets: |
+          aur-package/godot-preview.desktop
+          aur-package/godot-preview.svg
         commit_username: MLM-stuff
         commit_email: gfxoxinzh@mozmail.com
         ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-        commit_message: "Update to version ${{ steps.check.outputs.pkgver }}"
+        commit_message: "Update to version ${{ steps.check.outputs.latest_version }}-${{ steps.pkgrel.outputs.pkgrel }}"
