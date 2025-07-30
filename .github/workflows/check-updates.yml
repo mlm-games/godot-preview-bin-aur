@@ -39,13 +39,9 @@ jobs:
         AUR_VERSION=$(echo "$LATEST_RELEASE" | sed 's/\.dev/dev/g' | sed 's/\.beta/beta/g' | sed 's/\.rc/rc/g' | sed 's/-//g')
         echo "latest_version=$AUR_VERSION" >> $GITHUB_OUTPUT
         
-        # Get current version from PKGBUILD if it exists locally
-        if [ -f PKGBUILD ]; then
-          CURRENT_VERSION=$(grep "^pkgver=" PKGBUILD | cut -d= -f2)
-        else
-          CURRENT_VERSION="none"
-        fi
-        echo "Current version: $CURRENT_VERSION"
+        # Get current version from AUR PKGBUILD
+        CURRENT_VERSION=$(curl -s "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=godot-preview-bin" | grep "^pkgver=" | cut -d= -f2 || echo "none")
+        echo "Current version in AUR: $CURRENT_VERSION"
         echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
         
         if [[ "$AUR_VERSION" != "$CURRENT_VERSION" ]] || [[ "${{ inputs.force_update }}" == "true" ]]; then
