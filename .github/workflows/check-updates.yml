@@ -28,14 +28,19 @@ jobs:
       id: check
       run: |
         # Get latest preview/beta release from Godot builds
-        LATEST_RELEASE=$(curl -s https://api.github.com/repos/godotengine/godot-builds/releases | \
-          jq -r '[.[] | select(.tag_name | test("dev|beta|rc"))] | first | .tag_name')
+        RELEASES_JSON=$(curl -s https://api.github.com/repos/godotengine/godot-builds/releases)
+        if echo "$RELEASES_JSON" | jq -e 'type == "array"' >/dev/null; then
+          LATEST_RELEASE=$(echo "$RELEASES_JSON" | jq -r '[.[] | select(.tag_name | test("dev|beta|rc"))] | first | .tag_name')
+        else
+          echo "Error: Unexpected response from GitHub API"
+          exit 1
+        fi
         
         echo "Latest version: $LATEST_RELEASE"
         echo "latest_version_raw=$LATEST_RELEASE" >> $GITHUB_OUTPUT
         
         # Convert version format for AUR (replace dots in dev/beta/rc with underscores)
-        # e.g., 4.5-beta3 -> 4.5beta3
+        # e.g., 4.5-beta3 -> 4.5beta4
         AUR_VERSION=$(echo "$LATEST_RELEASE" | sed 's/\.dev/dev/g' | sed 's/\.beta/beta/g' | sed 's/\.rc/rc/g' | sed 's/-//g')
         echo "latest_version=$AUR_VERSION" >> $GITHUB_OUTPUT
         
