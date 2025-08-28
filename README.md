@@ -1,6 +1,6 @@
 # Godot Preview Binary AUR Package
 
-AUR package for Godot Engine preview/beta builds - automatically updated every 20 days.
+AUR package for Godot Engine preview/beta builds - automatically updated every 2 days.
 
 ## What it does
 
