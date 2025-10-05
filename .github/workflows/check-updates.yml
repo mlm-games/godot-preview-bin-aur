@@ -163,7 +163,7 @@ jobs:
     
     - name: Publish to AUR
       if: steps.check.outputs.update_needed == 'true'
-      uses: KSXGitHub/github-actions-deploy-aur@master
+      uses: mlm-games/aur-deploy-action@master
       with:
         pkgname: godot-preview-bin
         pkgbuild: aur-package/PKGBUILD
