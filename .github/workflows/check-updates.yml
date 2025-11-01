@@ -30,7 +30,7 @@ jobs:
         # Get latest preview/beta release from Godot builds
         RELEASES_JSON=$(curl -s https://api.github.com/repos/godotengine/godot-builds/releases)
         if echo "$RELEASES_JSON" | jq -e 'type == "array"' >/dev/null; then
-          LATEST_RELEASE=$(echo "$RELEASES_JSON" | jq -r '[.[] | select(.tag_name | test("dev|beta|rc"))] | first | .tag_name')
+          LATEST_RELEASE=$(echo "$RELEASES_JSON" | jq -r '[.[] | select(.tag_name | test("^4\\." + ".*(dev|beta|rc)"))] | first | .tag_name')
         else
           echo "Error: Unexpected response from GitHub API"
           exit 1
