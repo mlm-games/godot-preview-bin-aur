@@ -2,17 +2,12 @@ name: Check and Update Godot Preview
 
 on:
   schedule:
-    # Run every 20 days at 00:00 UTC
+    # Run every 2 days at 00:00 UTC
     - cron: '0 0 */2 * *'
   workflow_dispatch:
     inputs:
       force_update:
         description: 'Force update even if version unchanged'
-        required: false
-        default: false
-        type: boolean
-      increment_pkgrel:
-        description: 'Increment pkgrel (for same version updates)'
         required: false
         default: false
         type: boolean
@@ -27,6 +22,8 @@ jobs:
     - name: Check for latest Godot preview version
       id: check
       run: |
+        set -euo pipefail
+
         # Get latest preview/beta release from Godot builds
         RELEASES_JSON=$(curl -s https://api.github.com/repos/godotengine/godot-builds/releases)
         if echo "$RELEASES_JSON" | jq -e 'type == "array"' >/dev/null; then
@@ -37,80 +34,63 @@ jobs:
         fi
         
         echo "Latest version: $LATEST_RELEASE"
-        echo "latest_version_raw=$LATEST_RELEASE" >> $GITHUB_OUTPUT
+        echo "latest_version_raw=$LATEST_RELEASE" >> "$GITHUB_OUTPUT"
         
         # Convert version format for AUR (replace dots in dev/beta/rc with underscores)
         # e.g., 4.5-beta3 -> 4.5beta4
         AUR_VERSION=$(echo "$LATEST_RELEASE" | sed 's/\.dev/dev/g' | sed 's/\.beta/beta/g' | sed 's/\.rc/rc/g' | sed 's/-//g')
-        echo "latest_version=$AUR_VERSION" >> $GITHUB_OUTPUT
+        echo "latest_version=$AUR_VERSION" >> "$GITHUB_OUTPUT"
         
         # Get current version from AUR PKGBUILD
-        CURRENT_VERSION=$(curl -s "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=godot-preview-bin" | grep "^pkgver=" | cut -d= -f2 || echo "none")
+        TMPDIR=$(mktemp -d)
+        CURRENT_VERSION="none"
+        if git clone --depth 1 "https://aur.archlinux.org/godot-preview-bin.git" "$TMPDIR"; then
+          if [[ -f "$TMPDIR/PKGBUILD" ]]; then
+            CURRENT_VERSION=$(grep "^pkgver=" "$TMPDIR/PKGBUILD" | head -1 | cut -d= -f2 | tr -d "'\" ")
+          fi
+        else
+          echo "Warning: failed to clone AUR repo for godot-preview-bin; assuming no current version"
+        fi
+        rm -rf "$TMPDIR"
+
         echo "Current version in AUR: $CURRENT_VERSION"
-        echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+        echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
         
         if [[ "$AUR_VERSION" != "$CURRENT_VERSION" ]] || [[ "${{ inputs.force_update }}" == "true" ]]; then
-          echo "update_needed=true" >> $GITHUB_OUTPUT
+          echo "update_needed=true" >> "$GITHUB_OUTPUT"
         else
-          echo "update_needed=false" >> $GITHUB_OUTPUT
+          echo "update_needed=false" >> "$GITHUB_OUTPUT"
         fi
     
     - name: Download and calculate checksum
       if: steps.check.outputs.update_needed == 'true'
       id: download
       run: |
+        set -euo pipefail
         VERSION="${{ steps.check.outputs.latest_version_raw }}"
         URL="https://github.com/godotengine/godot-builds/releases/download/${VERSION}/Godot_v${VERSION}_linux.x86_64.zip"
         
         # Download and calculate checksum
         wget -O godot.zip "$URL"
         CHECKSUM=$(sha256sum godot.zip | cut -d ' ' -f 1)
-        echo "sha256sum=$CHECKSUM" >> $GITHUB_OUTPUT
+        echo "sha256sum=$CHECKSUM" >> "$GITHUB_OUTPUT"
         
         # Get file size to verify download
         SIZE=$(stat -c%s godot.zip)
         echo "Download size: $SIZE bytes"
         rm godot.zip
     
-    - name: Get current pkgrel from AUR
-      if: steps.check.outputs.update_needed == 'true'
-      id: current_pkgrel
-      run: |
-        # Try to get current PKGBUILD from AUR
-        CURRENT_PKGREL=$(curl -s "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=godot-preview-bin" | grep "^pkgrel=" | cut -d= -f2 || echo "0")
-        echo "current_pkgrel=$CURRENT_PKGREL" >> $GITHUB_OUTPUT
-        
-        # Check if the version in AUR matches what we're updating to
-        AUR_VERSION=$(curl -s "https://aur.archlinux.org/cgit/aur.git/plain/PKGBUILD?h=godot-preview-bin" | grep "^pkgver=" | cut -d= -f2 || echo "none")
-        if [[ "$AUR_VERSION" == "${{ steps.check.outputs.latest_version }}" ]]; then
-          echo "same_version=true" >> $GITHUB_OUTPUT
-        else
-          echo "same_version=false" >> $GITHUB_OUTPUT
-        fi
-      continue-on-error: true
-    
-    - name: Determine pkgrel
-      if: steps.check.outputs.update_needed == 'true'
-      id: pkgrel
-      run: |
-        if [[ "${{ steps.current_pkgrel.outputs.same_version }}" == "true" ]] && [[ "${{ inputs.increment_pkgrel }}" == "true" ]]; then
-          CURRENT=${{ steps.current_pkgrel.outputs.current_pkgrel }}
-          NEW_PKGREL=$((CURRENT + 1))
-          echo "pkgrel=$NEW_PKGREL" >> $GITHUB_OUTPUT
-        else
-          echo "pkgrel=1" >> $GITHUB_OUTPUT
-        fi
-    
     - name: Create PKGBUILD
       if: steps.check.outputs.update_needed == 'true'
       run: |
+        set -euo pipefail
         mkdir -p aur-package
         cat > aur-package/PKGBUILD << 'EOF'
         # Maintainer: MLM-stuff gfxoxinzh@mozmail.com
         pkgname=godot-preview-bin
         pkgver=${{ steps.check.outputs.latest_version }}
         _realver=${{ steps.check.outputs.latest_version_raw }}
-        pkgrel=${{ steps.pkgrel.outputs.pkgrel }}
+        pkgrel=1
         pkgdesc="Godot Engine Preview/Beta - Prebuilt binary from official builds"
         arch=('x86_64')
         url="https://godotengine.org"
@@ -170,7 +150,8 @@ jobs:
         assets: |
           aur-package/godot-preview.desktop
           aur-package/godot-preview.svg
+        auto_pkgrel: 'true'
         commit_username: MLM-stuff
         commit_email: gfxoxinzh@mozmail.com
         ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-        commit_message: "Update to version ${{ steps.check.outputs.latest_version }}-${{ steps.pkgrel.outputs.pkgrel }}"
+        commit_message: "Update to version ${{ steps.check.outputs.latest_version }}"
