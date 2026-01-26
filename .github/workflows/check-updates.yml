@@ -25,7 +25,12 @@ jobs:
         set -euo pipefail
 
         # Get latest preview/beta release from Godot builds
-        RELEASES_JSON=$(curl -s https://api.github.com/repos/godotengine/godot-builds/releases)
+        RELEASES_JSON=$(
+          curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/godotengine/godot-builds/releases?per_page=100"
+        )
         if echo "$RELEASES_JSON" | jq -e 'type == "array"' >/dev/null; then
           LATEST_RELEASE=$(
             echo "$RELEASES_JSON" |
