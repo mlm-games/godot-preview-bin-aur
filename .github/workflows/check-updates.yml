@@ -36,7 +36,7 @@ jobs:
         if echo "$RELEASES_JSON" | jq -e 'type == "array"' >/dev/null; then
           LATEST_RELEASE=$(
             echo "$RELEASES_JSON" |
-              jq -r '.[] | select(.tag_name|test("^4\\..*(dev|beta|rc)$")) | .tag_name' |
+              jq -r '.[] | select(.tag_name | test("^4\\..*-(dev|beta|rc)")) | .tag_name'
               sort -V |
               tail -n 1
           )
