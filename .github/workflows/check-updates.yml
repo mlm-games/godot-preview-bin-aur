@@ -20,6 +20,8 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Check for latest Godot preview version
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       id: check
       run: |
         set -euo pipefail
