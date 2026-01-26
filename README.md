@@ -4,7 +4,7 @@ AUR package for Godot Engine preview/beta builds - automatically updated every 2
 
 ## What it does
 
-- Automatically checks for new Godot preview/beta releases every 20 days via GitHub Actions
+- Automatically checks for new Godot preview/beta releases every 2 days via GitHub Actions
 - Downloads directly from official Godot builds
 - Provides a separate installation that doesn't conflict with stable Godot
 
