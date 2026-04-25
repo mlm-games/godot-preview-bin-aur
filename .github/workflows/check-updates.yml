@@ -141,7 +141,7 @@ jobs:
         EOF
         
         # Download Godot icon
-        wget -O aur-package/godot-preview.svg "https://raw.githubusercontent.com/godotengine/godot/master/icon.svg"
+        wget -O aur-package/godot-preview.svg "https://raw.githubusercontent.com/godotengine/godot/master/misc/logo/icon.svg"
     
     - name: Publish to AUR
       if: steps.check.outputs.update_needed == 'true'
